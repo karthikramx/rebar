@@ -1,0 +1,16 @@
+{
+  "generatedAt": "2026-08-05T16:47:16.090Z",
+  "groups": [
+    {
+      "group": "Root",
+      "baseUrl": "/assets",
+      "files": [
+        "Building-Architecture.ifc",
+        "Building-Landscaping.ifc",
+        "Duplex.ifc",
+        "Infra-Bridge.ifc",
+        "Infra-Landscaping.ifc"
+      ]
+    }
+  ]
+}
