@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-05T16:47:16.090Z",
+  "generatedAt": "2026-08-06T16:35:58.614Z",
   "groups": [
     {
       "group": "Root",
@@ -7,9 +7,34 @@
       "files": [
         "Building-Architecture.ifc",
         "Building-Landscaping.ifc",
+        "BuildingBIMModel.ifc",
         "Duplex.ifc",
+        "Duplex_A_20110505.ifc",
+        "Duplex_A_20110505_IssuesAlternate.ifc",
+        "Duplex_MEP_20110505.ifc",
+        "Duplex_M_20110505_IssuesAlternate.ifc",
+        "Duplex_P_20110505_IssuesAlternate.ifc",
+        "Ifc2s3_Duplex_Electrical.ifc",
+        "Ifc2x3_Duplex_Architecture.ifc",
+        "Ifc2x3_Duplex_MEP.ifc",
+        "Ifc2x3_Duplex_Mechanical.ifc",
+        "Ifc2x3_Duplex_Plumbing.ifc",
+        "Ifc2x3_SampleCastle.ifc",
+        "Ifc4_BasinFacetedBrep.ifc",
+        "Ifc4_CubeAdvancedBrep.ifc",
+        "Ifc4_Revit_ARC.ifc",
+        "Ifc4_Revit_ARC_FireRatingAdded.ifc",
+        "Ifc4_Revit_MEP.ifc",
+        "Ifc4_Revit_STR.ifc",
+        "Ifc4_SampleHouse.ifc",
+        "Ifc4_SampleHouse_0_GroundFloor.ifc",
+        "Ifc4_SampleHouse_1_Roof.ifc",
+        "Ifc4_SampleHouse_IfcWallStandardCase.ifc",
+        "Ifc4_SampleHouse_IfcWindow.ifc",
+        "Ifc4_WallElementedCase.ifc",
         "Infra-Bridge.ifc",
-        "Infra-Landscaping.ifc"
+        "Infra-Landscaping.ifc",
+        "SampleStructuralModel.ifc"
       ]
     }
   ]
