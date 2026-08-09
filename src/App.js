@@ -56,8 +56,12 @@ function formatPropValue(v) {
 
 function PropertyList({ props }) {
   if (!props) return null;
+  // Psets/qsets and material properties are large, deeply-nested blobs that
+  // dump as unreadable JSON and blow out the panel height (on mobile this
+  // pushes the bottom sheet up over the whole viewport, hiding the 3D
+  // render). Keep the panel to flat, readable scalar properties only.
   const entries = Object.entries(props).filter(
-    ([k]) => !["expressID", "type"].includes(k),
+    ([k]) => !["expressID", "type", "psets", "mats"].includes(k),
   );
   return (
     <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs">
@@ -378,15 +382,23 @@ export default function App() {
             />
           )}
 
-          {/* Details panel */}
+          {/* Details panel — a bottom sheet on mobile, a side panel on desktop */}
           <div
             className={cn(
-              "flex w-96 max-w-[85vw] shrink-0 flex-col border-l bg-card transition-transform duration-200 ease-out",
-              "fixed inset-y-0 right-0 z-40 md:relative md:z-auto",
-              rightOpen ? "translate-x-0" : "translate-x-full",
+              "flex flex-col bg-card transition-transform duration-200 ease-out",
+              // Mobile: bottom drawer that slides up from off-screen.
+              "fixed inset-x-0 bottom-0 z-40 max-h-[50vh] translate-x-0 rounded-t-2xl border-t",
+              rightOpen ? "translate-y-0" : "translate-y-full",
+              // Desktop: side panel that slides in from the right, as before.
+              "md:relative md:inset-auto md:z-auto md:w-96 md:max-w-[85vw] md:max-h-none md:shrink-0 md:translate-y-0 md:rounded-none md:border-t-0 md:border-l",
+              rightOpen ? "md:translate-x-0" : "md:translate-x-full",
               !rightOpen && "md:w-0 md:min-w-0 md:overflow-hidden md:border-l-0",
             )}
           >
+            {/* Drag handle affordance, mobile only */}
+            <div className="flex justify-center pb-1 pt-2 md:hidden">
+              <div className="h-1 w-10 rounded-full bg-muted-foreground/30" />
+            </div>
             <div className="flex items-center justify-between border-b px-4 py-2">
               <div className="text-sm font-medium">Selected element</div>
               <div className="flex items-center gap-1">
@@ -426,8 +438,8 @@ export default function App() {
                     {selection.properties?.type != null && (
                       <Badge>
                         {`type ${typeof selection.properties.type === "object"
-                            ? selection.properties.type.value
-                            : selection.properties.type
+                          ? selection.properties.type.value
+                          : selection.properties.type
                           }`}
                       </Badge>
                     )}
