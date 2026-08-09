@@ -98,8 +98,25 @@ const IFCViewer = forwardRef(function IFCViewer(
     container.addEventListener("mousemove", handleMove);
     container.addEventListener("click", handleClick);
 
+    // web-ifc-viewer only re-fits the renderer/camera on the window
+    // "resize" event, so layout changes that resize the container itself
+    // (e.g. collapsing a sidebar) leave the canvas at its old resolution
+    // and aspect ratio, making the render appear to shift/stretch. Watch
+    // the container directly and re-sync the viewer whenever its size
+    // changes.
+    const resizeObserver = new ResizeObserver(() => {
+      if (disposedRef.current) return;
+      try {
+        viewer.context.updateAspect();
+      } catch (_) {
+        // ignore transient errors during dispose/init races
+      }
+    });
+    resizeObserver.observe(container);
+
     return () => {
       disposedRef.current = true;
+      resizeObserver.disconnect();
       container.removeEventListener("mousemove", handleMove);
       container.removeEventListener("click", handleClick);
       try {
