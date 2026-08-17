@@ -20,8 +20,11 @@ import { IfcViewerAPI } from "web-ifc-viewer";
  *   - onSelect({ modelID, expressID, properties })
  *   - onLoadStart(url) / onLoadEnd(url) / onLoadError(err)
  */
+const LIGHT_BACKGROUND = 0xf5f5f7;
+const DARK_BACKGROUND = 0x1c1c1e;
+
 const IFCViewer = forwardRef(function IFCViewer(
-  { onSelect, onLoadStart, onLoadEnd, onLoadError, className, style },
+  { onSelect, onLoadStart, onLoadEnd, onLoadError, theme, className, style },
   ref,
 ) {
   const containerRef = useRef(null);
@@ -39,7 +42,9 @@ const IFCViewer = forwardRef(function IFCViewer(
 
     const viewer = new IfcViewerAPI({
       container,
-      backgroundColor: new Color(0xf5f5f7),
+      backgroundColor: new Color(
+        theme === "dark" ? DARK_BACKGROUND : LIGHT_BACKGROUND,
+      ),
     });
     viewerRef.current = viewer;
 
@@ -131,6 +136,19 @@ const IFCViewer = forwardRef(function IFCViewer(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep the 3D scene background in sync with the app's light/dark theme.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    try {
+      viewer.context.getScene().background = new Color(
+        theme === "dark" ? DARK_BACKGROUND : LIGHT_BACKGROUND,
+      );
+    } catch (_) {
+      // ignore transient errors during init/dispose races
+    }
+  }, [theme]);
 
   // ---------- imperative API ----------
   const clearModel = useCallback(async () => {

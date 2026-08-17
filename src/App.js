@@ -8,8 +8,10 @@ import {
   ListTree,
   Loader2,
   Menu,
+  Moon,
   MousePointerClick,
   Scissors,
+  Sun,
   Upload,
   X,
 } from "lucide-react";
@@ -29,6 +31,26 @@ import { cn } from "./lib/utils";
 import { ifcCatalog } from "./lib/ifcCatalog";
 
 const DESKTOP_MEDIA = "(min-width: 768px)";
+const THEME_STORAGE_KEY = "rebar-theme";
+
+function useTheme() {
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === "undefined") return "light";
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    // Light mode is the default; only switch to dark if explicitly stored.
+    return stored === "dark" ? "dark" : "light";
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  const toggleTheme = () =>
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+
+  return [theme, toggleTheme];
+}
 
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(() =>
@@ -83,6 +105,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selection, setSelection] = useState(null);
+  const [theme, toggleTheme] = useTheme();
 
   const isDesktop = useIsDesktop();
   // Panels open on desktop by default, closed on mobile. Whenever the
@@ -311,6 +334,21 @@ export default function App() {
             <Button
               variant="ghost"
               size="icon"
+              onClick={toggleTheme}
+              aria-label={
+                theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+              }
+              className="shrink-0"
+            >
+              {theme === "dark" ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <Moon className="h-4 w-4" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={toggleRight}
               aria-label={
                 rightOpen ? "Hide details panel" : "Show details panel"
@@ -328,6 +366,7 @@ export default function App() {
           <div className="relative min-w-0 flex-1">
             <IFCViewer
               ref={viewerRef}
+              theme={theme}
               onLoadStart={() => {
                 setLoading(true);
                 setError(null);
