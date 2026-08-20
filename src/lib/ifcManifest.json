@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-17T03:07:27.724Z",
+  "generatedAt": "2026-08-20T03:00:47.850Z",
   "groups": [
     {
       "group": "Root",
@@ -34,6 +34,8 @@
         "Ifc4_WallElementedCase.ifc",
         "Infra-Bridge.ifc",
         "Infra-Landscaping.ifc",
+        "R1DT-B3-STR.ifc",
+        "R1DT-B4-STR.ifc",
         "SampleStructuralModel.ifc"
       ]
     }

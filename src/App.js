@@ -67,30 +67,190 @@ function useIsDesktop() {
   return isDesktop;
 }
 
-function formatPropValue(v) {
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "object") {
-    if ("value" in v) return String(v.value);
-    return JSON.stringify(v);
-  }
-  return String(v);
+// ---------- IFC property extraction helpers ----------
+//
+// web-ifc returns wrapped values like { value: 3.44, type: 4 } for every
+// scalar. Unwrap once here so the rest of the code can stay readable.
+function unwrap(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "object" && "value" in v) return v.value;
+  return v;
 }
+
+function formatPropValue(v) {
+  const u = unwrap(v);
+  if (u === null || u === undefined || u === "") return "—";
+  if (typeof u === "number") {
+    // Avoid noisy floating-point tails like 2775.000000000045.
+    return Number.isInteger(u) ? String(u) : Number(u.toFixed(4)).toString();
+  }
+  if (typeof u === "object") return JSON.stringify(u);
+  return String(u);
+}
+
+// Quantities in this file are already in the units Revit exported with
+// (mm for length, m² for area, m³ for volume, kg for mass). The IFC type
+// name on each quantity tells us which unit to render.
+function formatQuantity(rawValue, ifcType) {
+  const v = unwrap(rawValue);
+  if (typeof v !== "number") return formatPropValue(rawValue);
+  const t = (ifcType || "").toUpperCase();
+  if (t.includes("LENGTH")) {
+    return Math.abs(v) >= 1000
+      ? `${(v / 1000).toFixed(3)} m`
+      : `${v.toFixed(1)} mm`;
+  }
+  if (t.includes("AREA")) return `${v.toFixed(2)} m²`;
+  if (t.includes("VOLUME")) return `${v.toFixed(3)} m³`;
+  if (t.includes("WEIGHT") || t.includes("MASS")) return `${v.toFixed(2)} kg`;
+  if (t.includes("COUNT")) return String(Math.round(v));
+  if (t.includes("TIME")) return `${v} s`;
+  return formatPropValue(rawValue);
+}
+
+// A pset from web-ifc has either .HasProperties (IfcPropertySet) or
+// .Quantities (IfcElementQuantity). We split them for a cleaner UI.
+function partitionPsets(psets) {
+  const propertySets = [];
+  const quantitySets = [];
+  for (const pset of psets || []) {
+    if (!pset) continue;
+    const name = unwrap(pset.Name) ?? "Properties";
+    if (Array.isArray(pset.Quantities)) {
+      quantitySets.push({
+        name,
+        items: pset.Quantities.filter(Boolean).map((q) => ({
+          name: unwrap(q.Name),
+          ifcType: q.type ?? q.constructor?.name,
+          // Different IfcQuantity* subclasses store the value under a
+          // different key. Pick whichever one is present.
+          value:
+            q.LengthValue ??
+            q.AreaValue ??
+            q.VolumeValue ??
+            q.CountValue ??
+            q.WeightValue ??
+            q.TimeValue,
+        })),
+      });
+    } else if (Array.isArray(pset.HasProperties)) {
+      propertySets.push({
+        name,
+        items: pset.HasProperties.filter(Boolean).map((p) => ({
+          name: unwrap(p.Name),
+          value: p.NominalValue,
+        })),
+      });
+    }
+  }
+  return { propertySets, quantitySets };
+}
+
+// Materials can be a plain IfcMaterial, an IfcMaterialLayerSet(Usage), or an
+// IfcMaterialList / IfcMaterialConstituentSet. Walk the common shapes and
+// collect unique names + layer thicknesses when present.
+function extractMaterials(mats) {
+  const seen = new Set();
+  const results = [];
+  const push = (name, extra) => {
+    if (!name) return;
+    const key = `${name}|${extra ?? ""}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push({ name, extra });
+  };
+  const walk = (node) => {
+    if (!node) return;
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (unwrap(node.Name)) push(unwrap(node.Name));
+    // IfcMaterialLayerSet / IfcMaterialLayerSetUsage
+    if (node.ForLayerSet) walk(node.ForLayerSet);
+    if (Array.isArray(node.MaterialLayers)) {
+      for (const layer of node.MaterialLayers) {
+        const matName = unwrap(layer?.Material?.Name);
+        const thickness = unwrap(layer?.LayerThickness);
+        if (matName) {
+          push(
+            matName,
+            thickness != null ? `${Number(thickness).toFixed(1)} mm` : null,
+          );
+        }
+      }
+    }
+    // IfcMaterialConstituentSet
+    if (Array.isArray(node.MaterialConstituents)) {
+      for (const c of node.MaterialConstituents) {
+        push(unwrap(c?.Material?.Name));
+      }
+    }
+    // IfcMaterialList
+    if (Array.isArray(node.Materials)) node.Materials.forEach(walk);
+  };
+  walk(mats);
+  return results;
+}
+
+// The "identity" section shows the handful of top-level scalar attributes
+// that are useful to a human (GlobalId, Name, Tag, ...) — not the numeric
+// expressID or nested pset/mat blobs.
+const IDENTITY_KEYS = [
+  "GlobalId",
+  "Name",
+  "LongName",
+  "Description",
+  "ObjectType",
+  "Tag",
+  "PredefinedType",
+];
 
 function PropertyList({ props }) {
   if (!props) return null;
-  // Psets/qsets and material properties are large, deeply-nested blobs that
-  // dump as unreadable JSON and blow out the panel height (on mobile this
-  // pushes the bottom sheet up over the whole viewport, hiding the 3D
-  // render). Keep the panel to flat, readable scalar properties only.
-  const entries = Object.entries(props).filter(
-    ([k]) => !["expressID", "type", "psets", "mats"].includes(k),
+  const entries = IDENTITY_KEYS.map((k) => [k, props[k]]).filter(
+    ([, v]) => unwrap(v) !== null && unwrap(v) !== undefined && unwrap(v) !== "",
   );
+  if (entries.length === 0) return null;
   return (
     <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs">
       {entries.map(([k, v]) => (
         <React.Fragment key={k}>
           <dt className="text-muted-foreground">{k}</dt>
           <dd className="break-all font-mono">{formatPropValue(v)}</dd>
+        </React.Fragment>
+      ))}
+    </dl>
+  );
+}
+
+function Section({ title, count, defaultOpen = true, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded border">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium hover:bg-accent"
+      >
+        <span>{title}</span>
+        <span className="flex items-center gap-2 text-muted-foreground">
+          {count != null && <span>{count}</span>}
+          <span>{open ? "−" : "+"}</span>
+        </span>
+      </button>
+      {open && <div className="border-t px-3 py-2">{children}</div>}
+    </div>
+  );
+}
+
+function KeyValueTable({ rows }) {
+  if (!rows || rows.length === 0) {
+    return <div className="text-xs text-muted-foreground">—</div>;
+  }
+  return (
+    <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs">
+      {rows.map((r, i) => (
+        <React.Fragment key={`${r.label}-${i}`}>
+          <dt className="text-muted-foreground">{r.label}</dt>
+          <dd className="break-all font-mono">{r.value}</dd>
         </React.Fragment>
       ))}
     </dl>
@@ -468,23 +628,136 @@ export default function App() {
               ) : (
                 <div className="space-y-3">
                   <div className="flex flex-wrap gap-1.5">
+                    {selection.ifcClass && (
+                      <Badge>{selection.ifcClass}</Badge>
+                    )}
                     <Badge variant="secondary">
                       Model {selection.modelID}
                     </Badge>
                     <Badge variant="outline">
                       Express #{selection.expressID}
                     </Badge>
-                    {selection.properties?.type != null && (
-                      <Badge>
-                        {`type ${typeof selection.properties.type === "object"
-                          ? selection.properties.type.value
-                          : selection.properties.type
-                          }`}
-                      </Badge>
-                    )}
+                    {selection.properties?.type != null &&
+                      !selection.ifcClass && (
+                        <Badge>
+                          {`type ${typeof selection.properties.type === "object"
+                              ? selection.properties.type.value
+                              : selection.properties.type
+                            }`}
+                        </Badge>
+                      )}
                   </div>
                   <Separator />
-                  <PropertyList props={selection.properties} />
+                  {(() => {
+                    const props = selection.properties || {};
+                    const { propertySets, quantitySets } = partitionPsets(
+                      props.psets,
+                    );
+                    const materials = extractMaterials(props.mats);
+                    const typeName = unwrap(props.type?.Name);
+                    return (
+                      <div className="space-y-3">
+                        <Section title="Identity" defaultOpen>
+                          <PropertyList props={props} />
+                        </Section>
+
+                        {typeName && (
+                          <Section title="Type" defaultOpen>
+                            <KeyValueTable
+                              rows={[
+                                { label: "Name", value: typeName },
+                                {
+                                  label: "PredefinedType",
+                                  value: formatPropValue(
+                                    props.type?.PredefinedType,
+                                  ),
+                                },
+                                {
+                                  label: "Tag",
+                                  value: formatPropValue(props.type?.Tag),
+                                },
+                              ].filter((r) => r.value && r.value !== "—")}
+                            />
+                          </Section>
+                        )}
+
+                        {quantitySets.length > 0 && (
+                          <Section
+                            title="Quantities"
+                            count={quantitySets.reduce(
+                              (n, q) => n + q.items.length,
+                              0,
+                            )}
+                            defaultOpen
+                          >
+                            <div className="space-y-3">
+                              {quantitySets.map((qs) => (
+                                <div key={qs.name}>
+                                  <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                                    {qs.name}
+                                  </div>
+                                  <KeyValueTable
+                                    rows={qs.items.map((q) => ({
+                                      label: q.name,
+                                      value: formatQuantity(q.value, q.ifcType),
+                                    }))}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </Section>
+                        )}
+
+                        {materials.length > 0 && (
+                          <Section
+                            title="Materials"
+                            count={materials.length}
+                            defaultOpen
+                          >
+                            <ul className="space-y-1 text-xs">
+                              {materials.map((m, i) => (
+                                <li
+                                  key={`${m.name}-${i}`}
+                                  className="flex items-center justify-between gap-2"
+                                >
+                                  <span className="font-mono">{m.name}</span>
+                                  {m.extra && (
+                                    <span className="text-muted-foreground">
+                                      {m.extra}
+                                    </span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </Section>
+                        )}
+
+                        {propertySets.length > 0 && (
+                          <Section
+                            title="Property sets"
+                            count={propertySets.length}
+                            defaultOpen={false}
+                          >
+                            <div className="space-y-3">
+                              {propertySets.map((ps) => (
+                                <div key={ps.name}>
+                                  <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                                    {ps.name}
+                                  </div>
+                                  <KeyValueTable
+                                    rows={ps.items.map((p) => ({
+                                      label: p.name,
+                                      value: formatPropValue(p.value),
+                                    }))}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </Section>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>

@@ -23,6 +23,100 @@ import { IfcViewerAPI } from "web-ifc-viewer";
 const LIGHT_BACKGROUND = 0xf5f5f7;
 const DARK_BACKGROUND = 0x1c1c1e;
 
+// web-ifc occasionally emits NaN vertex positions for degenerate/invalid
+// entities in an IFC file. NaN positions poison BufferGeometry:
+//   - computeBoundingSphere() logs "Computed radius is NaN"
+//   - the resulting Sphere/Box3 is invalid, so subsequent raycasts through
+//     MeshBVH and viewer.context.fitToFrame() can crash the whole viewer,
+//     or zoom out to fit a bogus origin point far from the model.
+//
+// We walk every mesh in the loaded model and, for any triangle that
+// references a NaN vertex, rewrite its three indices to point at a single
+// known-good vertex. This collapses only the broken triangles to a
+// zero-area degenerate at a valid location, leaving the position buffer
+// (and therefore world-space coordinates) untouched. Then we rebuild
+// bounds + BVH from the cleaned index.
+function sanitizeIfcModel(model) {
+  if (!model) return;
+  const meshes = [];
+  if (model.isMesh) meshes.push(model);
+  if (typeof model.traverse === "function") {
+    model.traverse((child) => {
+      if (child.isMesh && child !== model) meshes.push(child);
+    });
+  }
+
+  for (const mesh of meshes) {
+    const geom = mesh.geometry;
+    if (!geom || !geom.attributes?.position || !geom.index) continue;
+    const pos = geom.attributes.position.array;
+    const idx = geom.index.array;
+
+    // Build a per-vertex "is this position finite?" table once, then find
+    // the first fully-finite vertex to use as our fallback.
+    const vertexCount = pos.length / 3;
+    let fallback = -1;
+    const finite = new Uint8Array(vertexCount);
+    for (let v = 0; v < vertexCount; v++) {
+      const x = pos[v * 3];
+      const y = pos[v * 3 + 1];
+      const z = pos[v * 3 + 2];
+      const ok = Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z);
+      finite[v] = ok ? 1 : 0;
+      if (ok && fallback === -1) fallback = v;
+    }
+    if (fallback === -1) {
+      // Every vertex is bad — nothing safe we can do; skip this mesh.
+      // eslint-disable-next-line no-console
+      console.warn(
+        "IFCViewer: all vertices are NaN in geometry",
+        geom.uuid,
+        "- skipping",
+      );
+      continue;
+    }
+
+    // Rewrite triangles that reference any NaN vertex.
+    let fixed = 0;
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = idx[t];
+      const b = idx[t + 1];
+      const c = idx[t + 2];
+      if (!finite[a] || !finite[b] || !finite[c]) {
+        idx[t] = fallback;
+        idx[t + 1] = fallback;
+        idx[t + 2] = fallback;
+        fixed++;
+      }
+    }
+
+    if (fixed > 0) {
+      geom.index.needsUpdate = true;
+      geom.boundingBox = null;
+      geom.boundingSphere = null;
+      if (geom.boundsTree && typeof geom.disposeBoundsTree === "function") {
+        try {
+          geom.disposeBoundsTree();
+        } catch (_) {}
+      }
+      try {
+        geom.computeBoundingBox();
+        geom.computeBoundingSphere();
+      } catch (_) {}
+      if (typeof geom.computeBoundsTree === "function") {
+        try {
+          geom.computeBoundsTree();
+        } catch (_) {}
+      }
+      // eslint-disable-next-line no-console
+      console.warn(
+        `IFCViewer: collapsed ${fixed} triangle(s) with NaN vertices in geometry`,
+        geom.uuid,
+      );
+    }
+  }
+}
+
 const IFCViewer = forwardRef(function IFCViewer(
   { onSelect, onLoadStart, onLoadEnd, onLoadError, theme, className, style },
   ref,
@@ -92,7 +186,15 @@ const IFCViewer = forwardRef(function IFCViewer(
           true,
           false,
         );
-        onSelect?.({ modelID, expressID: id, properties });
+        // The numeric IFC class code (e.g. IFCWALL) is not on `properties` in
+        // a human-readable form — resolve it to a string via the ifcManager.
+        let ifcClass = null;
+        try {
+          ifcClass = viewer.IFC.loader.ifcManager.getIfcType(modelID, id);
+        } catch (_) {
+          // ignore — panel will just fall back to numeric type
+        }
+        onSelect?.({ modelID, expressID: id, ifcClass, properties });
       } catch (err) {
         // swallow selection errors – they are usually raycast noise
         // eslint-disable-next-line no-console
@@ -194,6 +296,14 @@ const IFCViewer = forwardRef(function IFCViewer(
         await clearModel();
         const model = await viewer.IFC.loadIfcUrl(url);
         if (!model) throw new Error("loadIfcUrl returned null");
+        // Strip NaN vertex positions before anything (raycaster/fitToFrame)
+        // touches the geometry — otherwise the first hover/click can crash.
+        try {
+          sanitizeIfcModel(model);
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn("IFCViewer: sanitize pass failed:", e);
+        }
         modelRef.current = model;
         // fit camera to the newly loaded model before enabling interactions
         try {
